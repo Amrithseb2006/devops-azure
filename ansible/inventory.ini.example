@@ -1,0 +1,9 @@
+# For MANUAL runs only: copy to inventory.ini.
+# 10.0.1.5 is the APP VM's PRIVATE IP inside the Azure VNet (the Jenkins VM reaches it over the VNet).
+# (inventory.ini is git-ignored. The Jenkins pipeline generates its own inventory at runtime
+#  from the 'app-vm-ip' credential.)
+[app_servers]
+app1 ansible_host=10.0.1.5
+
+[app_servers:vars]
+ansible_user=azureuser

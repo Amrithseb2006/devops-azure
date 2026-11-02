@@ -1,0 +1,75 @@
+---
+# Called by Jenkins on every successful build: applies the Kubernetes manifests with the new image tag.
+# Manual run (from the Jenkins VM):
+#   ansible-playbook -i inventory.ini deploy.yml --private-key ~/azure_devops_key \
+#     -e image_name=youruser/devops-demo -e image_tag=latest
+- name: Deploy devops-demo to Kubernetes (k3s)
+  hosts: app_servers
+  become: true
+
+  vars:
+    image_name: "your-dockerhub-username/devops-demo"
+    image_tag: "latest"
+    remote_dir: /opt/devops-demo/k8s
+    k8s_namespace: devops-demo
+    kubectl: k3s kubectl
+
+  tasks:
+    - name: Create manifest directory on the VM
+      ansible.builtin.file:
+        path: "{{ remote_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Copy Kubernetes manifests
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../k8s/"
+        dest: "{{ remote_dir }}/"
+        mode: "0644"
+
+    - name: Put the new image into the Deployment manifest
+      ansible.builtin.replace:
+        path: "{{ remote_dir }}/10-deployment.yaml"
+        regexp: "IMAGE_PLACEHOLDER"
+        replace: "{{ image_name }}:{{ image_tag }}"
+
+    - name: Apply manifests and wait for the rollout
+      block:
+        - name: kubectl apply
+          ansible.builtin.command: "{{ kubectl }} apply -f {{ remote_dir }}/"
+          register: apply_out
+
+        - name: Wait for the rolling update to finish
+          ansible.builtin.command: >
+            {{ kubectl }} -n {{ k8s_namespace }} rollout status deployment/devops-demo --timeout=180s
+          changed_when: false
+
+      rescue:
+        - name: Rollout failed - roll back to the previous version
+          ansible.builtin.command: "{{ kubectl }} -n {{ k8s_namespace }} rollout undo deployment/devops-demo"
+          ignore_errors: true
+
+        - name: Fail the deployment
+          ansible.builtin.fail:
+            msg: "Rollout of {{ image_name }}:{{ image_tag }} failed and was rolled back. Check 'kubectl -n {{ k8s_namespace }} describe pods'."
+
+    - name: Wait until the app answers on /health through the ingress (port 80)
+      ansible.builtin.uri:
+        url: "http://localhost/health"
+        status_code: 200
+        return_content: true
+      register: health
+      retries: 12
+      delay: 5
+      until: health.status == 200
+
+    - name: Show pods
+      ansible.builtin.command: "{{ kubectl }} -n {{ k8s_namespace }} get pods -o wide"
+      register: pods
+      changed_when: false
+
+    - name: Show result
+      ansible.builtin.debug:
+        msg:
+          - "Deployed {{ image_name }}:{{ image_tag }} -> {{ health.content }}"
+          - "{{ pods.stdout_lines }}"

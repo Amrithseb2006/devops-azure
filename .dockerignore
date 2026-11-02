@@ -1,0 +1,11 @@
+.git
+.gitignore
+src
+pom.xml
+Jenkinsfile
+ansible
+*.md
+target/*
+!target/devops-demo.jar
+k8s
+azure
